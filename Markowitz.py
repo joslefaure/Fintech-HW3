@@ -63,13 +63,12 @@ class EqualWeightPortfolio:
         assets = df.columns[df.columns != self.exclude]
         self.portfolio_weights = pd.DataFrame(index=df.index, columns=df.columns)
 
-        """
-        TODO: Complete Task 1 Below
-        """
+        # Prob 1 answer
+        equal_weight = 1 / len(assets)
+        for asset in assets:
+            self.portfolio_weights[asset] = equal_weight
+        # End
 
-        """
-        TODO: Complete Task 1 Above
-        """
         self.portfolio_weights.ffill(inplace=True)
         self.portfolio_weights.fillna(0, inplace=True)
 
@@ -117,6 +116,14 @@ class RiskParityPortfolio:
         """
         TODO: Complete Task 2 Below
         """
+        for i in range(self.lookback + 1, len(df)):
+            # Calculate weigts
+            asset_volatility = df_returns.copy()[assets].iloc[i - self.lookback:i].std()
+            inverse_volatility = 1 / asset_volatility
+            weights = inverse_volatility / inverse_volatility.sum()
+
+            # Assign the weights 
+            self.portfolio_weights.loc[df.index[i], assets] = weights.values
 
         """
         TODO: Complete Task 2 Above
@@ -193,7 +200,11 @@ class MeanVariancePortfolio:
                 # Sample Code: Initialize Decision w and the Objective
                 # NOTE: You can modify the following code
                 w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+
+                exp_return = w @ mu
+                variance = (w @ Sigma) @ w
+                model.setObjective(exp_return - gamma/2 * variance, gp.GRB.MAXIMIZE)
+                constr = model.addConstr(w @ np.ones(n) == 1, name = 'constr')
 
                 """
                 TODO: Complete Task 3 Below

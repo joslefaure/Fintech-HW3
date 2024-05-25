@@ -9,6 +9,11 @@ import quantstats as qs
 import gurobipy as gp
 import warnings
 import argparse
+import numpy as np
+np.seterr(invalid='raise')  # Raise an exception for invalid values
+
+
+import math
 
 """
 Project Setup
@@ -55,12 +60,62 @@ class MyPortfolio:
     NOTE: You can modify the initialization function
     """
 
-    def __init__(self, price, exclude, lookback=50, gamma=0):
+    def __init__(self, price, exclude, lookback=50, gamma=0.05):
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
         self.lookback = lookback
         self.gamma = gamma
+
+        
+    
+    def mv_opt(self, R_n, gamma, risk_free_rate=0.3):
+        Sigma = R_n.cov().values
+        Sigma[~np.isfinite(Sigma)] = 0
+        mu = R_n.mean().values
+        n = len(R_n.columns)
+        with gp.Env(empty=True) as env:
+            env.setParam("OutputFlag", 0)
+            env.setParam("DualReductions", 0)
+            env.start()
+            with gp.Model(env=env, name="portfolio") as model:
+                w = model.addMVar(n, name="w", ub=1)
+                exp_return = w @ mu
+                # Calculate variance
+                variance = w @ Sigma @ w
+                sqrt_variance = model.addVar(name="sqrt_variance", lb=0)
+                model.addConstr(sqrt_variance * sqrt_variance == variance, name="variance_constraint")
+                sqrt_variance_denominator = model.addVar(name="sqrt_variance_denominator")
+                sharpe_ratio = model.addVar(name="sharpe_ratio")
+                model.setObjective(sharpe_ratio, gp.GRB.MAXIMIZE)
+                # model.addConstr(w @ np.ones(n) == 1, name='constr')
+                
+                sharpe_ratio_objective = exp_return - risk_free_rate
+                model.addConstr(sharpe_ratio_objective * sqrt_variance_denominator == sharpe_ratio * sqrt_variance, name="sharpe_ratio_calculation")
+                model.addConstr(sqrt_variance_denominator == sqrt_variance, name="sqrt_variance_denominator_constraint")
+                
+                # Add a new constraint to ensure the Sharpe ratio is greater than 1
+                model.addConstr(sharpe_ratio >= 1, name="sharpe_ratio_constraint")
+
+                model.optimize()
+
+                # Check if the status is INF_OR_UNBD (code 4)
+                if model.status == gp.GRB.INF_OR_UNBD:
+                    print("Model status is INF_OR_UNBD. Reoptimizing with DualReductions set to 0.")
+                elif model.status == gp.GRB.INFEASIBLE:
+                    # Handle infeasible model
+                    print("Model is infeasible.")
+                elif model.status == gp.GRB.INF_OR_UNBD:
+                    # Handle infeasible or unbounded model
+                    print("Model is infeasible or unbounded.")
+                if model.status == gp.GRB.OPTIMAL or model.status == gp.GRB.SUBOPTIMAL:
+                    # Extract the solution
+                    solution = []
+                    for i in range(n):
+                        var = model.getVarByName(f"w[{i}]")
+                        # print(f"w {i} = {var.X}")
+                        solution.append(var.X)
+                    return solution
 
     def calculate_weights(self):
         # Get the assets by excluding the specified column
@@ -74,6 +129,9 @@ class MyPortfolio:
         """
         TODO: Complete Task 4 Below
         """
+        for i in range(int(self.lookback + 1), len(df)):
+            R_n = self.returns.copy()[assets].iloc[i-self.lookback:i]
+            self.portfolio_weights.loc[self.price.index[i], assets] = self.mv_opt(R_n, self.gamma)
 
         """
         TODO: Complete Task 4 Above
